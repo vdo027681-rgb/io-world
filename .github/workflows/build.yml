@@ -2,6 +2,9 @@ name: build-apk
 
 on: push
 
+env:
+  PIP_NO_BINARY: charset-normalizer
+
 jobs:
   build:
     runs-on: ubuntu-latest
