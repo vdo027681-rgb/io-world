@@ -1,42 +1,8 @@
-import os, sys, traceback
-
-_LOG_CANDIDATES = [
-    '/storage/emulated/0/Download/io_crash.log',
-    '/storage/emulated/0/io_crash.log',
-    os.path.expanduser('~/io_crash.log'),
-]
-
-def _write_log(text):
-    for p in _LOG_CANDIDATES:
-        try:
-            with open(p, 'a') as f:
-                f.write(text)
-            return p
-        except Exception:
-            pass
-    return None
-
-def _crash_hook(t, v, tb):
-    text = ''.join(traceback.format_exception(t, v, tb))
-    path = _write_log(text)
-    try:
-        from kivy.app import App
-        from kivy.uix.label import Label
-        class CrashApp(App):
-            def build(self):
-                return Label(text=(text + '\n\n(log: %s)' % str(path))[:4000])
-        CrashApp().run()
-        return
-    except Exception:
-        pass
-    sys.__excepthook__(t, v, tb)
-
-sys.excepthook = _crash_hook
-
 """
 Мир Ио — расширенная версия.
 Консоль: python main.py --console
-Команды: прожить N, мир, статус, вопрос ..., обучить N, скачать N,
+Графика: python main.py
+Команды: прожить N, тик, мир, статус, вопрос ..., обучить N, скачать N,
          сон, диагностика, гипотеза, бросить, сохранить, выход
 """
 import os, sys, json, random
@@ -111,14 +77,21 @@ class App:
             "diary": self.soc.diary_all,
             "assoc": [list(k) for k in self.brain.assoc],
         }
-        with open(SAVE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+        try:
+            with open(SAVE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            return True
+        except OSError:
+            return False
 
     def load(self):
         if not os.path.exists(SAVE):
             return False
-        with open(SAVE, "r", encoding="utf-8") as f:
-            d = json.load(f)
+        try:
+            with open(SAVE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            return False
         self.pl.day = d["day"]
         self.pl.tick = d.get("tick", 0)
         self.pl.body.coins = d["coins"]
@@ -140,15 +113,35 @@ class App:
         self.soc.diary_all = [tuple(x) for x in d.get("diary", [])]
         return True
 
+    # ---------- один шаг мира ----------
+    def _step_once(self):
+        """Один тик: план дня, шаг планеты, шаг общества; на границе суток — midnight."""
+        if not getattr(self.soc, "_plan", None):
+            self.soc._plan = self.soc.plan_day()
+        self.pl.step()
+        self.soc.step()
+        if self.pl.tick == 0:
+            self.soc.midnight()
+            self.soc._plan = None
+
     # ---------- команды ----------
+    def cmd_tick(self):
+        self._step_once()
+        b = self.pl.body
+        act = "?"
+        plan = getattr(self.soc, "_plan", None)
+        if plan and len(plan) > 0:
+            act = {"дом": "дома", "корпорация Ио": "на работе",
+                   "магазин": "в магазине"}.get(plan[0], plan[0])
+        return ("день %d, %s — Ио %s, монеты %d, энергия %.0f" % (
+            self.pl.day, self.pl.clock(), act, b.coins, b.energy))
+
     def cmd_live(self, n=1):
         for _ in range(n):
-            while self.pl.tick > 0 or len(getattr(self.soc, "_plan", []) or []) == 0:
-                self.pl.step()
-                self.soc.step()
-                if self.pl.tick == 0:
-                    break
+            for _ in range(48):
+                self._step_once()
             self.soc.midnight()
+            self.soc._plan = None
 
     def cmd_world(self):
         return W.map_view(self.pl, self.soc)
@@ -248,11 +241,17 @@ class App:
         return "бросок: дальность %.2f м, апекс %.2f м, закон %s" % (
             rng, apex, "соблюдён" if ok else "нарушен")
 
+    def cmd_diary(self, n=10):
+        if not self.soc.diary_all:
+            return "дневник пуст"
+        entries = self.soc.diary_all[-n:]
+        return "\n".join(str(e[1]) if len(e) > 1 else str(e) for e in entries)
+
 
 def run_console():
     app = App()
     app.load()
-    print("Мир Ио — расширенная версия. Команды: прожить, мир, статус, вопрос,")
+    print("Мир Ио — расширенная версия. Команды: прожить, тик, мир, статус, вопрос,")
     print("обучить, скачать, сон, диагностика, гипотеза, бросить, сохранить, выход")
     while True:
         try:
@@ -271,6 +270,8 @@ def run_console():
         elif cmd == "прожить":
             app.cmd_live(int(arg) if arg.isdigit() else 1)
             print("прожито")
+        elif cmd == "тик":
+            print(app.cmd_tick())
         elif cmd == "мир":
             print(app.cmd_world())
         elif cmd == "статус":
@@ -299,11 +300,149 @@ def run_console():
 # ---------- Kivy-версия ----------
 def run_kivy():
     from kivy.app import App as KApp
+    from kivy.core.window import Window
+    from kivy.uix.boxlayout import BoxLayout
+    from kivy.uix.gridlayout import GridLayout
     from kivy.uix.label import Label
+    from kivy.uix.button import Button
+    from kivy.uix.textinput import TextInput
+    from kivy.uix.scrollview import ScrollView
+    from iomap import MapWidget
+
+    core = App()
+    core.load()
 
     class IoApp(KApp):
+        title = "Ио"
+
         def build(self):
-            return Label(text="Ио\nкорпорация Ио")
+            try:
+                Window.softinput_mode = "below_target"
+            except Exception:
+                pass
+
+            self.log_lines = []
+            root = BoxLayout(orientation="vertical", padding=6, spacing=6)
+
+            self.status = Label(text=core.cmd_status(), size_hint=(1, None),
+                                height=90, halign="left", valign="top",
+                                font_size="13sp")
+            self.status.bind(size=self.status.setter("text_size"))
+            root.add_widget(self.status)
+
+            self.map = MapWidget(core, size_hint=(1, 0.35))
+            root.add_widget(self.map)
+
+            self.out = Label(text="Ио ждёт команды", size_hint_y=None,
+                             halign="left", valign="top", font_size="12sp")
+            self.out.bind(texture_size=self.out.setter("height"))
+            self.out.bind(size=self.out.setter("text_size"))
+            sv = ScrollView()
+            sv.add_widget(self.out)
+            root.add_widget(sv)
+
+            row = BoxLayout(size_hint=(1, None), height=44, spacing=6)
+            self.inp = TextInput(hint_text="вопрос Ио...", multiline=False,
+                                 font_size="14sp")
+            self.inp.bind(on_text_validate=self.on_ask)
+            row.add_widget(self.inp)
+            ask_btn = Button(text="спросить", size_hint=(None, 1), width=110)
+            ask_btn.bind(on_press=self.on_ask)
+            row.add_widget(ask_btn)
+            root.add_widget(row)
+
+            grid = GridLayout(cols=3, size_hint=(1, None), height=44 * 4 + 16,
+                              spacing=6, padding=0)
+            for text, cb in (
+                ("тик", self.do_tick),
+                ("прожить день", self.do_live),
+                ("мир", self.do_world),
+                ("сон", self.do_sleep),
+                ("гипотеза", self.do_hyp),
+                ("диагностика", self.do_diag),
+                ("бросить камень", self.do_throw),
+                ("обучить", self.do_train),
+                ("скачать текст", self.do_download),
+                ("сохранить", self.do_save),
+            ):
+                b = Button(text=text)
+                b.bind(on_press=cb)
+                grid.add_widget(b)
+            root.add_widget(grid)
+            self.refresh_status()
+            return root
+
+        # ---------- служебное ----------
+        def log(self, text):
+            self.log_lines.append(text)
+            self.log_lines = self.log_lines[-60:]
+            self.out.text = "\n\n".join(self.log_lines)
+
+        def refresh_status(self):
+            self.status.text = core.cmd_status()
+
+        def diary_tail(self):
+            try:
+                d = core.cmd_diary(3)
+            except Exception:
+                d = ""
+            if d and d != "дневник пуст":
+                return "\n--- дневник ---\n" + d
+            return ""
+
+        # ---------- кнопки ----------
+        def on_ask(self, *a):
+            q = self.inp.text.strip()
+            if not q:
+                return
+            self.inp.text = ""
+            self.log("вы: " + q + "\nИо: " + core.cmd_ask(q))
+
+        def do_tick(self, *a):
+            self.log(core.cmd_tick())
+            self.refresh_status()
+
+        def do_live(self, *a):
+            core.cmd_live(1)
+            self.refresh_status()
+            self.log("Ио прожил день" + self.diary_tail())
+
+        def do_world(self, *a):
+            self.log("карта мира:\n" + core.cmd_world())
+
+        def do_sleep(self, *a):
+            self.log(core.cmd_sleep())
+
+        def do_hyp(self, *a):
+            self.log(core.cmd_hypothesis())
+            self.refresh_status()
+
+        def do_diag(self, *a):
+            self.log(core.cmd_diagnostics())
+
+        def do_throw(self, *a):
+            self.log(core.cmd_throw())
+
+        def do_train(self, *a):
+            n = self.inp.text.strip()
+            arg = int(n) if n.isdigit() else 100
+            self.inp.text = ""
+            self.log(core.cmd_train(arg))
+            self.refresh_status()
+
+        def do_download(self, *a):
+            n = self.inp.text.strip()
+            arg = int(n) if n.isdigit() else 300
+            self.inp.text = ""
+            self.log(core.cmd_download(arg))
+            self.refresh_status()
+
+        def do_save(self, *a):
+            ok = core.save()
+            self.log("сохранено" if ok else "не удалось сохранить (нет доступа к записи)")
+
+        def on_stop(self):
+            core.save()
 
     IoApp().run()
 
