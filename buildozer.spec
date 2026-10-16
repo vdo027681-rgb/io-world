@@ -1,4 +1,6 @@
 [app]
+p4a.branch = v2024.01.21
+
 title = Io
 package.name = io
 package.domain = org.io
@@ -10,7 +12,7 @@ requirements = python3,kivy,numpy,requests
 
 orientation = portrait
 
-android.permissions = INTERNET
+android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE
 android.accept_license = True
 
 android.api = 31
@@ -21,4 +23,3 @@ android.archs = arm64-v8a
 [buildozer]
 log_level = 2
 warn_on_root = 1
-p4a.branch = 2024.1.21
