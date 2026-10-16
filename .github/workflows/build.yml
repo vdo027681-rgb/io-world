@@ -17,11 +17,12 @@ jobs:
 
       - name: Pin p4a branch
         run: |
-          if grep -q '^p4a.branch' buildozer.spec; then
-            sed -i 's/^p4a.branch.*/p4a.branch = 2024.1.21/' buildozer.spec
-          else
-            echo 'p4a.branch = 2024.1.21' >> buildozer.spec
-          fi
+          sed -i '/^p4a.branch/d' buildozer.spec
+          sed -i '/^
+$$
+buildozer
+$$
+/i p4a.branch = 2024.1.21' buildozer.spec
           tail -5 buildozer.spec
 
       - name: Install build tools
