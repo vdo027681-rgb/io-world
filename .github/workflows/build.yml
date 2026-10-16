@@ -18,11 +18,7 @@ jobs:
       - name: Pin p4a branch
         run: |
           sed -i '/^p4a.branch/d' buildozer.spec
-          sed -i '/^
-$$
-buildozer
-$$
-/i p4a.branch = 2024.1.21' buildozer.spec
+          sed -i '1a p4a.branch = 2024.1.21' buildozer.spec
           tail -5 buildozer.spec
 
       - name: Install build tools
