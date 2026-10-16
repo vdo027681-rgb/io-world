@@ -1,3 +1,38 @@
+import os, sys, traceback
+
+_LOG_CANDIDATES = [
+    '/storage/emulated/0/Download/io_crash.log',
+    '/storage/emulated/0/io_crash.log',
+    os.path.expanduser('~/io_crash.log'),
+]
+
+def _write_log(text):
+    for p in _LOG_CANDIDATES:
+        try:
+            with open(p, 'a') as f:
+                f.write(text)
+            return p
+        except Exception:
+            pass
+    return None
+
+def _crash_hook(t, v, tb):
+    text = ''.join(traceback.format_exception(t, v, tb))
+    path = _write_log(text)
+    try:
+        from kivy.app import App
+        from kivy.uix.label import Label
+        class CrashApp(App):
+            def build(self):
+                return Label(text=(text + '\n\n(log: %s)' % str(path))[:4000])
+        CrashApp().run()
+        return
+    except Exception:
+        pass
+    sys.__excepthook__(t, v, tb)
+
+sys.excepthook = _crash_hook
+
 """
 Мир Ио — расширенная версия.
 Консоль: python main.py --console
