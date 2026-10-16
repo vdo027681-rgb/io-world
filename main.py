@@ -22,6 +22,51 @@ SAVE = os.path.join(HERE, "save.json")
 SEED = os.path.join(HERE, "library", "seed.txt")
 
 
+def crash_log(text):
+    """Пытается записать ошибку в доступные места. Возвращает путь или None."""
+    candidates = [
+        os.path.join(HERE, "io_crash.log"),
+        os.path.expanduser("~/io_crash.log"),
+        "/storage/emulated/0/Download/io_crash.log",
+    ]
+    for p in candidates:
+        try:
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(text)
+            return p
+        except Exception:
+            pass
+    return None
+
+
+def show_error(err):
+    """Показывает ошибку на экране вместо молчаливого вылета."""
+    path = crash_log(err)
+    text = err
+    if path:
+        text += "\n\n(записано в %s)" % path
+    try:
+        from kivy.app import App as KApp
+        from kivy.uix.label import Label
+        from kivy.uix.scrollview import ScrollView
+
+        class ErrApp(KApp):
+            def build(self):
+                lab = Label(text=text[:6000], font_size="11sp",
+                            halign="left", valign="top")
+                lab.bind(size=lab.setter("text_size"))
+                lab.bind(texture_size=lab.setter("size"))
+                sv = ScrollView()
+                sv.add_widget(lab)
+                return sv
+
+        ErrApp().run()
+        return
+    except Exception:
+        pass
+    sys.stderr.write(err)
+
+
 class App:
     def __init__(self):
         self.pl = Planet()
@@ -38,10 +83,12 @@ class App:
         if os.path.exists(SEED):
             with open(SEED, "r", encoding="utf-8") as f:
                 text = f.read()
-        for fn in os.listdir(os.path.join(HERE, "library")):
-            if fn.endswith(".txt") and fn != "seed.txt":
-                with open(os.path.join(HERE, "library", fn), "r", encoding="utf-8") as f:
-                    text += " " + f.read()
+        lib = os.path.join(HERE, "library")
+        if os.path.isdir(lib):                      # папки может не быть — это нормально
+            for fn in os.listdir(lib):
+                if fn.endswith(".txt") and fn != "seed.txt":
+                    with open(os.path.join(lib, fn), "r", encoding="utf-8") as f:
+                        text += " " + f.read()
         self.text = text
         self.lemmas = build_vocab(text, min_count=1, limit=160)
         self.brain.wire_vocab(self.lemmas)
@@ -115,7 +162,6 @@ class App:
 
     # ---------- один шаг мира ----------
     def _step_once(self):
-        """Один тик: план дня, шаг планеты, шаг общества; на границе суток — midnight."""
         if not getattr(self.soc, "_plan", None):
             self.soc._plan = self.soc.plan_day()
         self.pl.step()
@@ -161,7 +207,6 @@ class App:
 
     def cmd_ask(self, q):
         ans = self.sub.answer(q)
-        # мозг подсказывает ассоциации
         words = q.split()
         for w in words:
             tgt = [b for (a, b) in self.brain.assoc if a == w]
@@ -201,7 +246,6 @@ class App:
         return "сон шепчет: " + " ".join(words[:8])
 
     def cmd_diagnostics(self):
-        # честный lesion-экзамен: обучаем ассоциации, экзаменуем, поражаем, экзаменуем
         ranked = sorted(self.counts.items(), key=lambda kv: -kv[1])
         pairs = [p for p, c in ranked if c >= 1][:5]
         if not pairs:
@@ -451,7 +495,8 @@ if __name__ == "__main__":
     if "--console" in sys.argv:
         run_console()
     else:
+        import traceback
         try:
             run_kivy()
-        except ImportError:
-            run_console()
+        except Exception:
+            show_error(traceback.format_exc())
